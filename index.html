@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2e7d32">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Courses</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root { --bg:#f6f7f4; --card:#fff; --text:#1d1f1c; --muted:#6b7067; --line:#e3e6df; --accent:#2e7d32; --accent-soft:#e3f1e3; --danger:#c62828; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#121411; --card:#1d201c; --text:#e9ece6; --muted:#9aa095; --line:#2c3029; --accent:#81c784; --accent-soft:#233323; --danger:#ef9a9a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { position:sticky; top:0; z-index:2; background:var(--accent); color:#fff; padding:14px 16px calc(14px); padding-top:calc(14px + env(safe-area-inset-top)); display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:20px; margin:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #status { font-size:13px; opacity:.9; }
+  main { max-width:640px; margin:0 auto; padding:12px 12px 120px; }
+  form { display:flex; gap:8px; margin:4px 0 14px; }
+  input[type=text] { flex:1; font:inherit; padding:12px 14px; border-radius:14px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button { font:inherit; border:0; border-radius:14px; padding:12px 16px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--muted); padding:8px 10px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:18px 6px 6px; font-weight:700; }
+  ul { list-style:none; margin:0; padding:0; background:var(--card); border-radius:16px; overflow:hidden; border:1px solid var(--line); }
+  li { display:flex; align-items:center; gap:12px; padding:12px 8px 12px 14px; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  .box { width:24px; height:24px; border-radius:7px; border:2px solid var(--muted); flex:none; display:flex; align-items:center; justify-content:center; }
+  li.done .box { background:var(--accent); border-color:var(--accent); }
+  li.done .box::after { content:"✓"; color:#fff; font-weight:800; font-size:15px; }
+  .name { flex:1; cursor:pointer; user-select:none; }
+  .qty { color:var(--muted); font-size:13px; display:block; }
+  li.done .name { text-decoration:line-through; color:var(--muted); }
+  .del { background:transparent; color:var(--muted); padding:6px 10px; font-size:18px; }
+  .empty { text-align:center; color:var(--muted); padding:28px 12px; }
+  .tip { font-size:13px; color:var(--muted); text-align:center; margin-top:18px; }
+  .error { background:#fdecea; color:#8a1c1c; border-radius:12px; padding:12px; margin:12px 0; }
+</style>
+</head>
+<body>
+<header><h1 id="title">🛒 Courses</h1><span id="status">…</span></header>
+<main>
+  <form id="add" autocomplete="off">
+    <input id="input" type="text" placeholder="Ajouter (ex : lait, pain, œufs)" enterkeyhint="done">
+    <button type="submit">Ajouter</button>
+  </form>
+  <div id="err"></div>
+  <div id="todo"></div>
+  <div id="done"></div>
+  <p class="tip">Touchez un article pour le cocher. Astuce : menu ⋮ du navigateur → « Ajouter à l'écran d'accueil ».</p>
+</main>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, collection, doc, onSnapshot, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  // Configuration publique du serveur (la sécurité vient de la clé secrète du lien).
+  const firebaseConfig = { apiKey: "AIzaSyCUHZ7smZb1pVcONnE7m9-02z6XIGphUW0", projectId: "liste-courses-e4c8c" };
+
+  const params = new URLSearchParams(location.hash.slice(1));
+  const key = params.get("k") || localStorage.getItem("lupa-k") || "";
+  const listName = params.get("n") || localStorage.getItem("lupa-n") || "Courses";
+  try { if (key) { localStorage.setItem("lupa-k", key); localStorage.setItem("lupa-n", listName); } } catch (e) {}
+  document.getElementById("title").textContent = "🛒 " + listName;
+  document.title = listName;
+
+  const $ = (id) => document.getElementById(id);
+  const status = (t) => { $("status").textContent = t; };
+  const showError = (t) => { $("err").innerHTML = t ? '<div class="error"></div>' : ""; if (t) $("err").firstChild.textContent = t; };
+
+  if (!/^[A-Za-z0-9]{32,}$/.test(key)) {
+    showError("Lien incomplet. Demandez le lien de la liste à la personne qui l'a partagée.");
+    status("");
+    throw new Error("no key");
+  }
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const itemsRef = collection(db, "lists", key, "items");
+  let items = new Map();
+
+  const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+
+  function render() {
+    const alive = [...items.values()].filter((i) => !i.deleted);
+    const todo = alive.filter((i) => !i.checked).sort((a, b) => (a.aisle || "").localeCompare(b.aisle || "") || a.name.localeCompare(b.name));
+    const done = alive.filter((i) => i.checked).sort((a, b) => a.name.localeCompare(b.name));
+    const list = (arr) => {
+      const ul = document.createElement("ul");
+      for (const i of arr) {
+        const li = document.createElement("li");
+        if (i.checked) li.className = "done";
+        const box = document.createElement("span"); box.className = "box";
+        const name = document.createElement("span"); name.className = "name"; name.textContent = i.name;
+        if (i.quantity) { const q = document.createElement("span"); q.className = "qty"; q.textContent = i.quantity; name.appendChild(q); }
+        const del = document.createElement("button"); del.className = "del"; del.textContent = "✕"; del.title = "Supprimer";
+        box.onclick = name.onclick = () => save({ ...i, checked: !i.checked });
+        del.onclick = () => save({ ...i, deleted: true });
+        li.append(box, name, del);
+        ul.appendChild(li);
+      }
+      return ul;
+    };
+    $("todo").innerHTML = "";
+    $("done").innerHTML = "";
+    if (todo.length === 0) {
+      $("todo").innerHTML = '<div class="empty">' + (done.length ? "Tout est dans le panier 🎉" : "Liste vide. Ajoutez un article ci-dessus.") + "</div>";
+    } else {
+      const h = document.createElement("h2"); h.textContent = "À acheter (" + todo.length + ")";
+      $("todo").append(h, list(todo));
+    }
+    if (done.length) {
+      const h = document.createElement("h2"); h.textContent = "Dans le panier (" + done.length + ")";
+      const clear = document.createElement("button"); clear.className = "ghost"; clear.textContent = "Retirer les articles cochés";
+      clear.onclick = clearChecked;
+      $("done").append(h, list(done), clear);
+    }
+  }
+
+  function save(i) {
+    const data = { name: i.name, quantity: i.quantity || "", aisle: i.aisle || "Autre", checked: !!i.checked,
+                   addedAt: i.addedAt || Date.now(), updatedAt: Date.now(), deleted: !!i.deleted };
+    items.set(i.id, { id: i.id, ...data });
+    render();
+    setDoc(doc(itemsRef, i.id), data).catch((e) => showError("Enregistrement impossible : " + e.message));
+  }
+
+  async function clearChecked() {
+    const batch = writeBatch(db);
+    for (const i of items.values()) {
+      if (i.checked && !i.deleted) {
+        batch.set(doc(itemsRef, i.id), { name: i.name, quantity: i.quantity || "", aisle: i.aisle || "Autre", checked: true,
+                                         addedAt: i.addedAt || Date.now(), updatedAt: Date.now(), deleted: true });
+      }
+    }
+    try { await batch.commit(); } catch (e) { showError(e.message); }
+  }
+
+  $("add").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const raw = $("input").value;
+    $("input").value = "";
+    for (const part of raw.split(/[,\n]/)) {
+      const name = cap(part.trim());
+      if (!name) continue;
+      const existing = [...items.values()].find((i) => !i.deleted && norm(i.name) === norm(name));
+      if (existing) { if (existing.checked) save({ ...existing, checked: false }); continue; }
+      save({ id: uid(), name, quantity: "", aisle: "Autre", checked: false, addedAt: Date.now() });
+    }
+    $("input").focus();
+  });
+
+  onSnapshot(itemsRef, (snap) => {
+    items = new Map(snap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+    showError("");
+    status(snap.metadata.fromCache ? "hors ligne" : "✓ à jour");
+    render();
+  }, (e) => { status("erreur"); showError("Impossible de lire la liste : " + e.message); });
+
+  window.addEventListener("offline", () => status("hors ligne"));
+</script>
+</body>
+</html>
