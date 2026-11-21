@@ -153,7 +153,14 @@
     $("input").focus();
   });
 
+  $("todo").innerHTML = '<div class="empty">Connexion à la liste…</div>';
+  let received = false;
+  setTimeout(() => {
+    if (!received) showError("La liste ne se charge pas. Vérifiez la connexion Internet puis rechargez la page. Si ça continue, le partage a peut-être été arrêté ou le lien changé : demandez le nouveau lien.");
+  }, 15000);
+
   onSnapshot(itemsRef, (snap) => {
+    received = true;
     items = new Map(snap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
     showError("");
     status(snap.metadata.fromCache ? "hors ligne" : "✓ à jour");
