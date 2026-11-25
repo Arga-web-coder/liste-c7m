@@ -36,6 +36,14 @@
   .del { background:transparent; color:var(--muted); padding:6px 10px; font-size:18px; }
   .empty { text-align:center; color:var(--muted); padding:28px 12px; }
   .tip { font-size:13px; color:var(--muted); text-align:center; margin-top:18px; }
+  .edit { background:transparent; color:var(--muted); padding:6px 8px; font-size:18px; }
+  dialog { border:0; border-radius:20px; padding:18px; width:min(92vw,420px); background:var(--card); color:var(--text); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  dialog form { display:block; margin:0; }
+  dialog h3 { margin:0 0 12px; font-size:18px; }
+  dialog label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  dialog input[type=text] { width:100%; }
+  dialog .row { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
   .error { background:#fdecea; color:#8a1c1c; border-radius:12px; padding:12px; margin:12px 0; }
 </style>
 </head>
@@ -48,8 +56,21 @@
   </form>
   <div id="err"></div>
   <div id="todo"></div>
+  <dialog id="editor">
+    <form id="editForm" method="dialog">
+      <h3>Modifier l'article</h3>
+      <label for="editName">Article</label>
+      <input id="editName" type="text" required maxlength="200">
+      <label for="editQty">Quantité / précision (facultatif)</label>
+      <input id="editQty" type="text" maxlength="100" placeholder="Ex : 2, 1 kg, bio, marque…">
+      <div class="row">
+        <button type="button" class="ghost" id="editCancel">Annuler</button>
+        <button type="submit">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
   <div id="done"></div>
-  <p class="tip">Touchez un article pour le cocher. Astuce : menu ⋮ du navigateur → « Ajouter à l'écran d'accueil ».</p>
+  <p class="tip">Touchez un article pour le cocher, ✎ pour le modifier. Astuce : menu ⋮ du navigateur → « Ajouter à l'écran d'accueil ».</p>
 </main>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -109,10 +130,12 @@
         const box = document.createElement("span"); box.className = "box";
         const name = document.createElement("span"); name.className = "name"; name.textContent = i.name;
         if (i.quantity) { const q = document.createElement("span"); q.className = "qty"; q.textContent = i.quantity; name.appendChild(q); }
+        const edit = document.createElement("button"); edit.className = "edit"; edit.textContent = "✎"; edit.title = "Modifier";
         const del = document.createElement("button"); del.className = "del"; del.textContent = "✕"; del.title = "Supprimer";
         box.onclick = name.onclick = () => save({ ...i, checked: !i.checked });
+        edit.onclick = () => openEditor(i);
         del.onclick = () => save({ ...i, deleted: true });
-        li.append(box, name, del);
+        li.append(box, name, edit, del);
         ul.appendChild(li);
       }
       return ul;
@@ -132,6 +155,23 @@
       $("done").append(h, list(done), clear);
     }
   }
+
+  let editing = null;
+  function openEditor(i) {
+    editing = i.id;
+    $("editName").value = i.name;
+    $("editQty").value = i.quantity || "";
+    $("editor").showModal();
+    setTimeout(() => $("editName").focus(), 50);
+  }
+  $("editCancel").onclick = () => { editing = null; $("editor").close(); };
+  $("editForm").addEventListener("submit", () => {
+    const i = items.get(editing);
+    const name = cap($("editName").value.trim());
+    editing = null;
+    if (!i || !name) return;
+    save({ ...i, name: name.slice(0, 200), quantity: $("editQty").value.trim().slice(0, 100) });
+  });
 
   function save(i) {
     const data = { name: i.name, quantity: i.quantity || "", aisle: i.aisle || "Autre", checked: !!i.checked,
