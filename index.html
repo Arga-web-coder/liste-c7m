@@ -55,13 +55,24 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, collection, doc, onSnapshot, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-  // Configuration publique du serveur (la sécurité vient de la clé secrète du lien).
-  const firebaseConfig = { apiKey: "AIzaSyCUHZ7smZb1pVcONnE7m9-02z6XIGphUW0", projectId: "liste-courses-e4c8c" };
-
+  // Aucune clé de serveur n'est écrite dans cette page publique :
+  // tout arrive par le lien privé envoyé depuis l'application Lupa.
   const params = new URLSearchParams(location.hash.slice(1));
-  const key = params.get("k") || localStorage.getItem("lupa-k") || "";
-  const listName = params.get("n") || localStorage.getItem("lupa-n") || "Courses";
-  try { if (key) { localStorage.setItem("lupa-k", key); localStorage.setItem("lupa-n", listName); } } catch (e) {}
+  const fromLink = params.has("k");
+  const ls = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const key = params.get("k") || ls("lupa-k") || "";
+  const listName = params.get("n") || ls("lupa-n") || "Courses";
+  const projectId = (fromLink ? params.get("p") : ls("lupa-p")) || "";
+  const apiKey = (fromLink ? params.get("a") : ls("lupa-a")) || "";
+  try {
+    if (key) {
+      localStorage.setItem("lupa-k", key); localStorage.setItem("lupa-n", listName);
+      localStorage.setItem("lupa-p", projectId); localStorage.setItem("lupa-a", apiKey);
+    }
+  } catch (e) {}
+  // On retire les paramètres de l'adresse (ils restent mémorisés sur ce téléphone).
+  if (fromLink) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+  const firebaseConfig = { apiKey, projectId };
   document.getElementById("title").textContent = "🛒 " + listName;
   document.title = listName;
 
@@ -69,8 +80,10 @@
   const status = (t) => { $("status").textContent = t; };
   const showError = (t) => { $("err").innerHTML = t ? '<div class="error"></div>' : ""; if (t) $("err").firstChild.textContent = t; };
 
-  if (!/^[A-Za-z0-9]{32,}$/.test(key)) {
-    showError("Lien incomplet. Demandez le lien de la liste à la personne qui l'a partagée.");
+  if (!/^[A-Za-z0-9]{32,}$/.test(key) || !/^[a-z0-9-]{4,40}$/.test(projectId) || !/^[A-Za-z0-9_-]{30,60}$/.test(apiKey)) {
+    showError(key && !apiKey
+      ? "Ce lien est ancien : la liste a changé de serveur. Demandez le nouveau lien à la personne qui l'a partagée (dans Lupa : nuage en haut de la liste → Envoyer le lien)."
+      : "Lien incomplet. Demandez le lien de la liste à la personne qui l'a partagée.");
     status("");
     throw new Error("no key");
   }
